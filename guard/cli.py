@@ -42,7 +42,10 @@ def cmd_check(args: argparse.Namespace) -> int:
     violations = []
     for path in python_files(root, args.paths):
         source = (root / path).read_text(encoding="utf-8")
-        violations += find_violations(source, path, decisions)
+        try:
+            violations += find_violations(source, path, decisions)
+        except SyntaxError as err:
+            print(f"{path}:{err.lineno}: skipped, does not parse: {err.msg}")
     for v in violations:
         print(describe(v, by_id))
     errors = sum(v.level == "error" for v in violations)
