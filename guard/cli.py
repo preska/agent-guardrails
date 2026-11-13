@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from guard.baseline import load_baseline, new_violations, save_baseline
 from guard.checker import Violation, find_violations
 from guard.decisions import DECISIONS_DIR, Decision, load_decisions
 
@@ -35,22 +36,39 @@ def describe(v: Violation, decisions: dict[str, Decision]) -> str:
             f"    fix: {d.fix}")
 
 
-def cmd_check(args: argparse.Namespace) -> int:
-    root = find_root(Path.cwd())
-    decisions = load_decisions(root)
-    by_id = {d.id: d for d in decisions}
+def collect(root: Path, paths: list[str], decisions: list[Decision]) -> list[Violation]:
     violations = []
-    for path in python_files(root, args.paths):
+    for path in python_files(root, paths):
         source = (root / path).read_text(encoding="utf-8")
         try:
             violations += find_violations(source, path, decisions)
         except SyntaxError as err:
             print(f"{path}:{err.lineno}: skipped, does not parse: {err.msg}")
-    for v in violations:
+    return violations
+
+
+def report(found: list[Violation], decisions: list[Decision], known: int) -> int:
+    by_id = {d.id: d for d in decisions}
+    for v in found:
         print(describe(v, by_id))
-    errors = sum(v.level == "error" for v in violations)
-    print(f"{len(violations)} violation(s), {errors} blocking")
+    errors = sum(v.level == "error" for v in found)
+    print(f"{len(found)} new violation(s), {errors} blocking; {known} known in the baseline")
     return 1 if errors else 0
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    root = find_root(Path.cwd())
+    decisions = load_decisions(root)
+    violations = collect(root, args.paths, decisions)
+    found = new_violations(violations, load_baseline(root))
+    return report(found, decisions, len(violations) - len(found))
+
+
+def cmd_baseline(args: argparse.Namespace) -> int:
+    root = find_root(Path.cwd())
+    count = save_baseline(root, collect(root, [], load_decisions(root)))
+    print(f"recorded {count} existing violation(s) in .decisions/baseline.json")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     check = commands.add_parser("check", help="check files against the decisions")
     check.add_argument("paths", nargs="*", help="files to check (default: every tracked .py file)")
     check.set_defaults(run=cmd_check)
+    baseline = commands.add_parser("baseline", help="record today's violations as known")
+    baseline.set_defaults(run=cmd_baseline)
     args = parser.parse_args(argv)
     return args.run(args)
 
