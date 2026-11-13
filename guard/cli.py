@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import guard.hook
 from guard.baseline import load_baseline, new_violations, save_baseline
 from guard.checker import Violation, find_violations
 from guard.decisions import DECISIONS_DIR, Decision, load_decisions
@@ -79,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
     check.set_defaults(run=cmd_check)
     baseline = commands.add_parser("baseline", help="record today's violations as known")
     baseline.set_defaults(run=cmd_baseline)
+    hook = commands.add_parser("hook", help="Claude Code PreToolUse hook (reads JSON on stdin)")
+    hook.set_defaults(run=lambda _args: guard.hook.main())
     args = parser.parse_args(argv)
     return args.run(args)
 
