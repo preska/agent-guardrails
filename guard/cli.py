@@ -11,6 +11,7 @@ import guard.hook
 from guard.baseline import load_baseline, new_violations, save_baseline
 from guard.checker import Violation, find_violations
 from guard.decisions import DECISIONS_DIR, Decision, load_decisions
+from guard.gate import staged_violations
 
 
 def find_root(start: Path) -> Path:
@@ -48,12 +49,13 @@ def collect(root: Path, paths: list[str], decisions: list[Decision]) -> list[Vio
     return violations
 
 
-def report(found: list[Violation], decisions: list[Decision], known: int) -> int:
+def report(found: list[Violation], decisions: list[Decision], known: int | None = None) -> int:
     by_id = {d.id: d for d in decisions}
     for v in found:
         print(describe(v, by_id))
     errors = sum(v.level == "error" for v in found)
-    print(f"{len(found)} new violation(s), {errors} blocking; {known} known in the baseline")
+    summary = f"{len(found)} new violation(s), {errors} blocking"
+    print(summary if known is None else f"{summary}; {known} known in the baseline")
     return 1 if errors else 0
 
 
@@ -72,6 +74,14 @@ def cmd_baseline(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gate(args: argparse.Namespace) -> int:
+    root = find_root(Path.cwd())
+    status = report(staged_violations(root), load_decisions(root))
+    if status:
+        print("commit blocked: fix the code, or change the decision if the team has changed its mind")
+    return status
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="guard", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -82,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
     baseline.set_defaults(run=cmd_baseline)
     hook = commands.add_parser("hook", help="Claude Code PreToolUse hook (reads JSON on stdin)")
     hook.set_defaults(run=lambda _args: guard.hook.main())
+    gate = commands.add_parser("gate", help="pre-commit: check the staged changes")
+    gate.set_defaults(run=cmd_gate)
     args = parser.parse_args(argv)
     return args.run(args)
 
