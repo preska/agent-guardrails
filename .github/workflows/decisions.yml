@@ -1,0 +1,25 @@
+name: decisions
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write  # upload SARIF to code scanning
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install .
+      - run: guard ci --sarif guard.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()  # upload even when guard fails the job
+        with:
+          sarif_file: guard.sarif
+          category: guard

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from guard.baseline import load_baseline, new_violations, save_baseline
 from guard.checker import Violation, find_violations
 from guard.decisions import DECISIONS_DIR, Decision, load_decisions
 from guard.gate import staged_violations
+from guard.sarif import annotation, to_sarif
 
 
 def find_root(start: Path) -> Path:
@@ -82,6 +84,20 @@ def cmd_gate(args: argparse.Namespace) -> int:
     return status
 
 
+def cmd_ci(args: argparse.Namespace) -> int:
+    root = find_root(Path.cwd())
+    decisions = load_decisions(root)
+    violations = collect(root, [], decisions)
+    found = new_violations(violations, load_baseline(root))
+    if args.sarif:
+        Path(args.sarif).write_text(to_sarif(found, decisions), encoding="utf-8")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        by_id = {d.id: d for d in decisions}
+        for v in found:
+            print(annotation(v, by_id[v.decision_id]))
+    return report(found, decisions, len(violations) - len(found))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="guard", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -94,6 +110,9 @@ def main(argv: list[str] | None = None) -> int:
     hook.set_defaults(run=lambda _args: guard.hook.main())
     gate = commands.add_parser("gate", help="pre-commit: check the staged changes")
     gate.set_defaults(run=cmd_gate)
+    ci = commands.add_parser("ci", help="check the whole repo; annotate the PR; write SARIF")
+    ci.add_argument("--sarif", metavar="FILE", help="also write the results as SARIF 2.1.0")
+    ci.set_defaults(run=cmd_ci)
     args = parser.parse_args(argv)
     return args.run(args)
 
