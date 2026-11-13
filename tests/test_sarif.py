@@ -8,7 +8,7 @@ from pathlib import Path
 from guard.checker import find_violations
 from guard.decisions import load_decisions
 from guard.sarif import annotation, to_sarif
-from tests.helpers import make_repo
+from tests.helpers import git, make_repo, write
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -38,14 +38,22 @@ class SarifTest(unittest.TestCase):
         self.assertEqual(line.count("::"), 2)
         self.assertNotIn("\n", line)
 
-    def test_ci_command_on_this_repo(self):
-        # The repo's own baseline covers the examples' existing violations.
+    def test_ci_command_annotates_new_violations_only(self):
         env = {**os.environ, "GITHUB_ACTIONS": "true", "PYTHONPATH": str(REPO)}
-        run = subprocess.run([sys.executable, "-m", "guard", "ci"], cwd=REPO,
-                             capture_output=True, text=True, env=env)
-        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertIn("0 new violation(s)", run.stdout)
 
+        def ci():
+            return subprocess.run([sys.executable, "-m", "guard", "ci", "--sarif", "out.sarif"],
+                                  cwd=self.root, capture_output=True, text=True, env=env)
+
+        subprocess.run([sys.executable, "-m", "guard", "baseline"], cwd=self.root, env=env, check=True)
+        self.assertEqual(ci().returncode, 0)
+        write(self.root, "billing/tax.py", "rate = float(r)\n")
+        git(self.root, "add", "-A")
+        run = ci()
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("::error file=billing/tax.py,line=1,col=8,title=DEC-002", run.stdout)
+        sarif = json.loads((self.root / "out.sarif").read_text())
+        self.assertEqual([r["ruleId"] for r in sarif["runs"][0]["results"]], ["DEC-002"])
 
 if __name__ == "__main__":
     unittest.main()
