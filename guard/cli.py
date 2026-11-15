@@ -40,15 +40,23 @@ def describe(v: Violation, decisions: dict[str, Decision]) -> str:
             f"    fix: {d.fix}")
 
 
-def collect(root: Path, paths: list[str], decisions: list[Decision]) -> list[Violation]:
-    violations = []
+def collect(root: Path, paths: list[str], decisions: list[Decision]) -> tuple[list[Violation], list[str]]:
+    """Violations, and the files a decision applies to that couldn't be parsed."""
+    violations, unchecked = [], []
     for path in python_files(root, paths):
         source = (root / path).read_text(encoding="utf-8")
         try:
             violations += find_violations(source, path, decisions)
         except SyntaxError as err:
-            print(f"{path}:{err.lineno}: skipped, does not parse: {err.msg}")
-    return violations
+            unchecked.append(f"{path}:{err.lineno}: can't check, does not parse: {err.msg}")
+    return violations, unchecked
+
+
+def report_unchecked(unchecked: list[str]) -> int:
+    """Files a decision applies to but that can't be parsed fail the run: unchecked isn't clean."""
+    for line in unchecked:
+        print(line)
+    return 1 if unchecked else 0
 
 
 def report(found: list[Violation], decisions: list[Decision], known: int | None = None) -> int:
@@ -64,21 +72,28 @@ def report(found: list[Violation], decisions: list[Decision], known: int | None 
 def cmd_check(args: argparse.Namespace) -> int:
     root = find_root(Path.cwd())
     decisions = load_decisions(root)
-    violations = collect(root, args.paths, decisions)
+    violations, unchecked = collect(root, args.paths, decisions)
     found = new_violations(violations, load_baseline(root))
-    return report(found, decisions, len(violations) - len(found))
+    status = report(found, decisions, len(violations) - len(found))
+    return report_unchecked(unchecked) or status
 
 
 def cmd_baseline(args: argparse.Namespace) -> int:
     root = find_root(Path.cwd())
-    count = save_baseline(root, collect(root, [], load_decisions(root)))
+    violations, unchecked = collect(root, [], load_decisions(root))
+    if report_unchecked(unchecked):
+        print("baseline not written: fix the files above first, or they'd be missing from it")
+        return 1
+    count = save_baseline(root, violations)
     print(f"recorded {count} existing violation(s) in .decisions/baseline.json")
     return 0
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
     root = find_root(Path.cwd())
-    status = report(staged_violations(root), load_decisions(root))
+    found, unchecked = staged_violations(root)
+    status = report(found, load_decisions(root))
+    status = report_unchecked(unchecked) or status
     if status:
         print("commit blocked: fix the code, or change the decision if the team has changed its mind")
     return status
@@ -87,7 +102,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
 def cmd_ci(args: argparse.Namespace) -> int:
     root = find_root(Path.cwd())
     decisions = load_decisions(root)
-    violations = collect(root, [], decisions)
+    violations, unchecked = collect(root, [], decisions)
     found = new_violations(violations, load_baseline(root))
     if args.sarif:
         Path(args.sarif).write_text(to_sarif(found, decisions), encoding="utf-8")
@@ -95,7 +110,8 @@ def cmd_ci(args: argparse.Namespace) -> int:
         by_id = {d.id: d for d in decisions}
         for v in found:
             print(annotation(v, by_id[v.decision_id]))
-    return report(found, decisions, len(violations) - len(found))
+    status = report(found, decisions, len(violations) - len(found))
+    return report_unchecked(unchecked) or status
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from guard.gate import staged_violations
-from tests.helpers import git, make_repo, write
+from tests.helpers import MODEL_SDKS, git, make_repo, write
 
 CLEAN = "from decimal import Decimal\n\n\ndef total(x):\n    return Decimal(x)\n"
 
@@ -14,7 +14,8 @@ class GateTest(unittest.TestCase):
         self.root = make_repo({"billing/invoice.py": CLEAN})
 
     def gate(self):
-        return [(v.decision_id, v.path) for v in staged_violations(self.root)]
+        found, self.unchecked = staged_violations(self.root)
+        return [(v.decision_id, v.path) for v in found]
 
     def test_nothing_staged_passes(self):
         self.assertEqual(self.gate(), [])
@@ -35,6 +36,19 @@ class GateTest(unittest.TestCase):
         git(self.root, "add", "billing/rates.py")
         write(self.root, "billing/rates.py", CLEAN)
         self.assertEqual(self.gate(), [("DEC-001", "billing/rates.py")])
+
+    def test_an_in_scope_file_that_does_not_parse_blocks(self):
+        write(self.root, "billing/broken.py", "import openai\ndef f(:\n")
+        git(self.root, "add", "billing/broken.py")
+        self.assertEqual(self.gate(), [])
+        self.assertEqual(len(self.unchecked), 1)
+        self.assertIn("billing/broken.py:2", self.unchecked[0])
+
+    def test_an_out_of_scope_file_that_does_not_parse_is_not_our_business(self):
+        root = make_repo({}, decisions=(MODEL_SDKS,))  # applies to billing/** only
+        write(root, "web/broken.py", "def f(:\n")
+        git(root, "add", "web/broken.py")
+        self.assertEqual(staged_violations(root), ([], []))
 
     def test_the_hook_blocks_a_real_commit(self):
         hooks = self.root / "hooks"

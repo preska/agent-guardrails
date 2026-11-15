@@ -7,6 +7,11 @@ still has to be committed, so the gate runs there.
 It checks what is *staged*, not what is in the working tree: after
 `git add -p`, the working file and the commit can differ, and only the commit
 matters. New violations are measured against the baseline.
+
+It fails closed. A staged file that a decision applies to but that doesn't
+parse can't be checked, so it blocks the commit instead of slipping through.
+(The agent hook in step 4 fails open on purpose: it is advice; this is the
+enforcement point.)
 """
 
 from __future__ import annotations
@@ -29,13 +34,14 @@ def staged_python_files(root: Path) -> list[str]:
     return sorted(p for p in out.split("\0") if p)
 
 
-def staged_violations(root: Path) -> list[Violation]:
+def staged_violations(root: Path) -> tuple[list[Violation], list[str]]:
+    """New violations in the staged code, and the in-scope files that couldn't be checked."""
     decisions = load_decisions(root)
-    found = []
+    found, unchecked = [], []
     for path in staged_python_files(root):
         source = git(root, "show", f":{path}")  # ":path" is the staged copy
         try:
             found += find_violations(source, path, decisions)
         except SyntaxError as err:
-            print(f"{path}:{err.lineno}: not checked, does not parse: {err.msg}")
-    return new_violations(found, load_baseline(root))
+            unchecked.append(f"{path}:{err.lineno}: can't check, does not parse: {err.msg}")
+    return new_violations(found, load_baseline(root)), unchecked
