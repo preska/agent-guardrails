@@ -11,3 +11,7 @@ RATES = {
 
 def tax_for(region: str, amount: Decimal) -> Decimal:
     return amount * RATES.get(region, Decimal("0"))
+
+
+def effective_rate(region: str) -> float:
+    return float(RATES.get(region, Decimal("0")))
